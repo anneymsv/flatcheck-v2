@@ -122,7 +122,6 @@ td{padding:11px 10px;border-bottom:1px solid var(--line);vertical-align:top;line
   <div class="card">
     <h2>Evaluate a listing</h2>
     <div class="sub">Paste the full text of a rental ad and press Evaluate — <b>one AI call runs everything</b>: extraction, fit score, red flags, scam screen, and the gov.uk legal audit, then auto-fills the Crime and Transit tabs. One click, all five tabs populated.</div>
-    <div class="srcbadge">✨ No setup needed — just paste a listing and evaluate. Prefer to use your own quota instead of the shared backend? Get a free Gemini key at <a href="https://aistudio.google.com/apikey" target="_blank">aistudio.google.com/apikey</a> and add it in ⚙️ Settings.</div>
     <label>Listing text</label>
     <textarea id="listingText" placeholder="Paste everything: title, description, price, address/area, agent details…"></textarea>
     <button class="ghost" id="extractBtn">✨ Extract details & autofill all tabs</button>
@@ -238,19 +237,6 @@ td{padding:11px 10px;border-bottom:1px solid var(--line);vertical-align:top;line
 <div class="modal-bg" id="modalBg"><div class="modal">
   <h2>Settings</h2>
   <div class="sub">Stored on this device only.</div>
-  <label>AI provider</label>
-  <select id="provider">
-    <option value="gemini">Google Gemini — FREE tier (aistudio.google.com → Get API key)</option>
-    <option value="openrouter">OpenRouter — FREE models (openrouter.ai, works in HK)</option>
-    <option value="groq">Groq / Llama — FREE tier (console.groq.com — blocked in Hong Kong)</option>
-    <option value="anthropic">Anthropic Claude — paid (console.anthropic.com)</option>
-  </select>
-  <label>API key</label>
-  <input id="apiKey" type="password" placeholder="paste the key for the provider above">
-  <div class="note">The key is used directly from your browser to the provider; never sent anywhere else. Gemini free quota resets daily at midnight Pacific time. If this page runs inside claude.ai as an artifact, Claude is used with no key.</div>
-  <label>Model</label>
-  <input id="modelName" value="gemini-flash-latest">
-  <div class="note">Defaults: gemini-flash-latest (alias, always points at Google's newest Flash model) · llama-3.3-70b-versatile · claude-sonnet-4-5. Changing provider resets this field. If a model 404s, check the provider's current model list — names change every few months.</div>
   <label>Monthly budget (£)</label>
   <input id="budget" type="number" placeholder="e.g. 1800">
   <label>Work / anchor postcode</label>
@@ -343,8 +329,8 @@ If you cannot find a quote, the verdict must be NOT FOUND. Never guess.`;
 function legalUser(listing){ return "SOURCE DOCUMENTS:\n"+SOURCE_DOCS+"\n\nLISTING (OUTPUT UNDER REVIEW):\n"+listing; }
 
 /* ================= STATE ================= */
-let S = { provider:'gemini', apiKey:'', modelName:'gemini-flash-latest', budget:'', anchorPc:'', maxCommute:'', mustHaves:'', dealBreakers:'', prefRooms:'', prefMates:'', prefGender:'', prefSmoking:'', prefWindows:'', prefTube:'', prefFurnished:'', prefMatesBg:'' };
-const SETTINGS_KEYS = ["provider","apiKey","modelName","budget","anchorPc","maxCommute","mustHaves","dealBreakers","prefRooms","prefMates","prefGender","prefSmoking","prefWindows","prefTube","prefFurnished","prefMatesBg"];
+let S = { budget:'', anchorPc:'', maxCommute:'', mustHaves:'', dealBreakers:'', prefRooms:'', prefMates:'', prefGender:'', prefSmoking:'', prefWindows:'', prefTube:'', prefFurnished:'', prefMatesBg:'' };
+const SETTINGS_KEYS = ["budget","anchorPc","maxCommute","mustHaves","dealBreakers","prefRooms","prefMates","prefGender","prefSmoking","prefWindows","prefTube","prefFurnished","prefMatesBg"];
 function prefsText(){
   const parts=[];
   if(S.prefRooms) parts.push("rooms: "+S.prefRooms);
@@ -360,18 +346,11 @@ function prefsText(){
   return parts.join("; ")||"-";
 }
 let lastExtract = null;
-const DEFAULT_MODELS = { gemini:'gemini-flash-latest', groq:'llama-3.3-70b-versatile', openrouter:'meta-llama/llama-3.3-70b-instruct:free', anthropic:'claude-sonnet-4-5' };
 let saved = [];
 try { S = Object.assign(S, JSON.parse(localStorage.getItem('fc_settings')||'{}')); saved = JSON.parse(localStorage.getItem('fc_saved')||'[]'); } catch(e){}
 let lastEval = null;
 
-/* ================= LLM CALL (Claude) ================= */
-async function apiFetch(url, opts, label){
-  let r;
-  try { r = await fetch(url, opts); }
-  catch(e){ throw new Error(label+" connection failed ("+e.message+"). Checklist: 1) API key pasted AND Save clicked in ⚙️ Settings; 2) internet connection; 3) ad-blockers or VPNs can block API calls — try disabling; 4) if opened inside claude.ai as an artifact, external APIs are blocked — run the file locally in your browser instead."); }
-  return r;
-}
+/* ================= LLM CALL ================= */
 const BACKEND_URL = "https://flatcheck-api-anneycf.vercel.app/api/gemini-proxy";
 const BACKEND_MODEL = "gemini-flash-lite-latest"; // high free-tier capacity, matters for shared public traffic
 async function callBackend(systemPrompt, userPrompt, maxTokens){
@@ -391,54 +370,11 @@ async function callLLM(systemPrompt, userPrompt, maxTokens=8000){
   if (window.claude && window.claude.complete) {
     return await window.claude.complete(systemPrompt + "\n\n" + userPrompt);
   }
-  // Primary: shared backend, works with zero setup for any visitor
   try{
     return await callBackend(systemPrompt, userPrompt, maxTokens);
   }catch(backendErr){
-    if(!S.apiKey) throw new Error("Could not reach FlatCheck's backend ("+backendErr.message+"). Click '👀 See a sample result' for a zero-setup preview, or add your own API key in ⚙️ Settings as a fallback.");
-    // Fallback: visitor's own key, if they've set one
-    try{
-      return await callLLMWithOwnKey(systemPrompt, userPrompt, maxTokens);
-    }catch(keyErr){ throw new Error("Shared backend failed ("+backendErr.message+") and your own key also failed ("+keyErr.message+")."); }
+    throw new Error("Could not reach FlatCheck's backend ("+backendErr.message+"). Click '👀 See a sample result' for a zero-setup preview, or try again in a moment.");
   }
-}
-async function callLLMWithOwnKey(systemPrompt, userPrompt, maxTokens){
-  if (S.provider === "gemini") {
-    const r = await apiFetch(`https://generativelanguage.googleapis.com/v1beta/models/${S.modelName}:generateContent?key=${encodeURIComponent(S.apiKey)}`, {
-      method:"POST", headers:{ "Content-Type":"application/json" },
-      body: JSON.stringify({ systemInstruction:{ parts:[{text:systemPrompt}] },
-        contents:[{ role:"user", parts:[{text:userPrompt}] }],
-        generationConfig:{ maxOutputTokens:maxTokens, responseMimeType:"application/json" } })
-    });
-    if(!r.ok){ const t=await r.text(); throw new Error("Gemini API error "+r.status+(r.status===404?" — model name outdated; check ai.google.dev/gemini-api/docs/models and update it in ⚙️ Settings":r.status===429?" — quota hit. Try model 'gemini-flash-lite-latest' in ⚙️ Settings (lite models have much higher free limits), wait a minute (per-minute limits are tight), or switch provider":"")+": "+t.slice(0,300)); }
-    const d = await r.json();
-    return (d.candidates?.[0]?.content?.parts||[]).map(p=>p.text||"").join("");
-  }
-  if (S.provider === "groq" || S.provider === "openrouter") {
-    const url = S.provider==="groq" ? "https://api.groq.com/openai/v1/chat/completions" : "https://openrouter.ai/api/v1/chat/completions";
-    const r = await apiFetch(url, {
-      method:"POST", headers:{ "Content-Type":"application/json", "Authorization":"Bearer "+S.apiKey },
-      body: JSON.stringify({ model:S.modelName, max_tokens:maxTokens, response_format:{type:"json_object"},
-        messages:[{role:"system",content:systemPrompt},{role:"user",content:userPrompt}] })
-    });
-    if(!r.ok){ const t=await r.text(); const P = S.provider==="groq"?"Groq":"OpenRouter";
-      throw new Error(P+" API error "+r.status+(
-        r.status===429? (S.provider==="openrouter"?" — this free model's shared pool is busy right now. Wait a minute and retry, or pick another free model at openrouter.ai/models (filter: free) and paste it in ⚙️ Settings, or switch provider to Gemini":" — rate limit hit; wait and retry")
-        :r.status===404||r.status===400?" — model may be retired; check the provider's model list and update it in ⚙️ Settings"
-        :r.status===401?" — key invalid; regenerate it on the provider's site":"")+": "+t.slice(0,300)); }
-    const d = await r.json();
-    return d.choices?.[0]?.message?.content || "";
-  }
-  const r = await apiFetch("https://api.anthropic.com/v1/messages", {
-    method:"POST",
-    headers:{ "Content-Type":"application/json", "x-api-key":S.apiKey,
-      "anthropic-version":"2023-06-01", "anthropic-dangerous-direct-browser-access":"true" },
-    body: JSON.stringify({ model:S.modelName, max_tokens:maxTokens, system:systemPrompt,
-      messages:[{role:"user", content:userPrompt}] })
-  });
-  if(!r.ok){ const t = await r.text(); throw new Error("API error "+r.status+": "+t.slice(0,300)); }
-  const d = await r.json();
-  return d.content.map(c=>c.text||"").join("");
 }
 function parseJSON(text){
   let t = text.trim().replace(/^```(json)?/gi,"").replace(/```/g,"").trim();
@@ -489,9 +425,6 @@ document.getElementById("settingsBtn").onclick = ()=>{
   modalBg.classList.add("on");
 };
 modalBg.addEventListener("click", e=>{ if(e.target===modalBg) modalBg.classList.remove("on"); });
-document.getElementById("provider").addEventListener("change", e=>{
-  document.getElementById("modelName").value = DEFAULT_MODELS[e.target.value] || "";
-});
 document.getElementById("saveSettings").onclick = ()=>{
   SETTINGS_KEYS.forEach(k=>S[k]=document.getElementById(k).value.trim());
   try{ localStorage.setItem("fc_settings", JSON.stringify(S)); }catch(e){}
@@ -870,16 +803,7 @@ document.getElementById("imageGo").onclick = async ()=>{
         if(!r.ok){ const msg=d.error?.message||JSON.stringify(d).slice(0,300); throw new Error("Backend error "+r.status+": "+msg); }
         raw = (d.candidates?.[0]?.content?.parts||[]).map(p=>p.text||"").join("");
       }catch(backendErr){
-        if(S.apiKey && S.provider==="gemini"){
-          const r = await apiFetch(`https://generativelanguage.googleapis.com/v1beta/models/${S.modelName}:generateContent?key=${encodeURIComponent(S.apiKey)}`, {
-            method:"POST", headers:{"Content-Type":"application/json"},
-            body: JSON.stringify({ contents:[{role:"user",parts}], generationConfig:{maxOutputTokens:1500,responseMimeType:"application/json"} }) }, "Gemini");
-          if(!r.ok){ const t=await r.text(); throw new Error("Gemini API error "+r.status+": "+t.slice(0,300)); }
-          const d = await r.json();
-          raw = (d.candidates?.[0]?.content?.parts||[]).map(p=>p.text||"").join("");
-        } else {
-          throw new Error("Could not reach FlatCheck's backend ("+backendErr.message+"). Image analysis needs either the shared backend or your own Gemini key (switch provider to Gemini in ⚙️ Settings) as a fallback.");
-        }
+        throw new Error("Could not reach FlatCheck's backend ("+backendErr.message+"). Try again in a moment.");
       }
     }
     const parsed = parseJSON(raw);
