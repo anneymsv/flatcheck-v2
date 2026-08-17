@@ -1,0 +1,5 @@
+{
+  "name": "flatcheck-api",
+  "version": "1.0.0",
+  "description": "Backend for FlatCheck v2 - proxies Gemini calls so visitors never need their own API key"
+}
